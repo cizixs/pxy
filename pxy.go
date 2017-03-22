@@ -20,6 +20,29 @@ func NewProxy() *Pxy {
 	return &Pxy{}
 }
 
+func (p *Pxy) handleTunnel(rw http.ResponseWriter, req *http.Request) {
+	host := req.URL.Host
+
+	hij, ok := rw.(http.Hijacker)
+	if !ok {
+		panic("HTTP Server does not support hijacking")
+	}
+
+	client, _, err := hij.Hijack()
+	if err != nil {
+		return
+	}
+	client.Write([]byte("HTTP/1.0 200 Connection Established\r\n\r\n"))
+
+	server, err := net.Dial("tcp", host)
+	if err != nil {
+		return
+	}
+
+	go io.Copy(server, client)
+	io.Copy(client, server)
+}
+
 // ServeHTTP is the main handler for all requests.
 func (p *Pxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	fmt.Printf("Received request %s %s %s\n",
@@ -27,6 +50,11 @@ func (p *Pxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		req.Host,
 		req.RemoteAddr,
 	)
+
+	if req.Method == "CONNECT" {
+		p.handleTunnel(rw, req)
+		return
+	}
 
 	transport := p.Transport
 	if transport == nil {
@@ -70,9 +98,5 @@ func (p *Pxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func main() {
 	proxy := NewProxy()
-
-	fmt.Println("Serve on :8080")
-
-	http.Handle("/", proxy)
-	http.ListenAndServe("0.0.0.0:8080", nil)
+	http.ListenAndServe("0.0.0.0:8080", proxy)
 }
