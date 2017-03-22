@@ -3,5 +3,6 @@ A simple proxy server with flexibility.
 
 ## Features
 
-- Custome fiters
-- Request and Response statistics
+- [x] Support both HTTP and HTTPS traffic
+- [ ] Custome fiters
+- [ ] Request and Response statistics
