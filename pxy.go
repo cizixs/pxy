@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -12,7 +14,8 @@ import (
 type Pxy struct {
 	// The transport used to send proxy requests to actual server.
 	// If nil, http.DefaultTransport is used.
-	Transport http.RoundTripper
+	Transport  http.RoundTripper
+	Credential string
 }
 
 // NewProxy returns a new Pxy object
@@ -43,8 +46,40 @@ func (p *Pxy) handleTunnel(rw http.ResponseWriter, req *http.Request) {
 	io.Copy(client, server)
 }
 
+// Reference:
+// - https://zh.wikipedia.org/wiki/HTTP%E5%9F%BA%E6%9C%AC%E8%AE%A4%E8%AF%81
+// - https://github.com/yangxikun/gsproxy
+func (p *Pxy) proxyAuthCheck(r *http.Request) (ok bool) {
+	if p.Credential == "" { // no auth
+		return true
+	}
+	auth := r.Header.Get("Proxy-Authorization")
+	if auth == "" {
+		return
+	}
+	const prefix = "Basic "
+	if !strings.HasPrefix(auth, prefix) {
+		return
+	}
+	credential := auth[len(prefix):]
+	return credential == p.Credential
+}
+
+func (p *Pxy) handleProxyAuth(w http.ResponseWriter, r *http.Request) bool {
+	if p.proxyAuthCheck(r) {
+		return true
+	}
+	w.Header().Add("Proxy-Authenticate", "Basic realm=\"*\"")
+	w.WriteHeader(http.StatusProxyAuthRequired)
+	w.Write(nil)
+	return false
+}
+
 // ServeHTTP is the main handler for all requests.
 func (p *Pxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	if !p.handleProxyAuth(rw, req) {
+		return
+	}
 	fmt.Printf("Received request %s %s %s\n",
 		req.Method,
 		req.Host,
@@ -97,6 +132,14 @@ func (p *Pxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
+	addr := flag.String("addr", ":8080", "listen address")
+	auth := flag.String("auth", "", "http auth, eg: susan:hello-kitty")
+	flag.Parse()
+
 	proxy := NewProxy()
-	http.ListenAndServe("0.0.0.0:8080", proxy)
+	if *auth != "" {
+		proxy.Credential = base64.StdEncoding.EncodeToString([]byte(*auth))
+	}
+	fmt.Printf("listening on %s\n", *addr)
+	http.ListenAndServe(*addr, proxy)
 }
